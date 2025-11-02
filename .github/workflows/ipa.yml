@@ -20,20 +20,49 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install briefcase
 
+      # 1) Генерируем Xcode-проект (Briefcase)
       - name: Create iOS project
         run: briefcase create iOS
 
-      - name: Build iOS project
-        run: briefcase build iOS
-
-      - name: Package as IPA
+      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos), без подписи
+      - name: Build iOS project for device (iphoneos)
+        shell: bash
         run: |
+          set -e
+          XCODEPROJ="$(find . -type d -name '*.xcodeproj' | head -n1)"
+          echo "XCODEPROJ=$XCODEPROJ"
+          # соберём Release для устройства (iphoneos), без подписи
+          xcodebuild \
+            -project "$XCODEPROJ" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build_derived \
+            BUILD_LIBRARIES_FOR_DISTRIBUTION=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | xcpretty || exit ${PIPESTATUS[0]}
+
+      # 3) Находим .app и пакуем в IPA
+      - name: Package as IPA
+        shell: bash
+        run: |
+          set -e
           mkdir -p artifacts
-          APP_PATH=$(find . -type d -name "*.app" | head -n1)
-          cd "$(dirname "$APP_PATH")"
+          # ищем .app из девайсной сборки
+          APP_PATH="$(find build_derived/Build/Products -type d -name '*.app' -path '*Release-iphoneos*' | head -n1)"
+          echo "APP_PATH=$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app for iphoneos not found"
+            exit 1
+          fi
+          # создаём Payload и аккуратно кладём туда .app (с кавычками, чтобы русские/пробелы не сломали)
+          rm -rf Payload
           mkdir Payload
-          mv "$APP_PATH" Payload/
-          zip -r ../artifacts/X-Port-unsigned.ipa Payload
+          cp -R "$APP_PATH" Payload/
+          cd Payload
+          zip -r ../artifacts/X-Port-unsigned.ipa ./
+          cd ..
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
