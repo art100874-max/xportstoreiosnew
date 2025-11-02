@@ -24,30 +24,31 @@ jobs:
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos), без подписи и с указанием SCHEME
-      - name: Build iOS project for device (iphoneos)
+      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos) по TARGET, без подписи
+      - name: Build iOS project for device (iphoneos) via TARGET
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          # Найдём .xcodeproj
           XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
           echo "XCODEPROJ=$XCODEPROJ"
 
-          # Найдём первую схему в проекте (.xcscheme)
-          SCHEME_FILE="$(ls "$XCODEPROJ/xcshareddata/xcschemes/"*.xcscheme | head -n1)"
-          if [ -z "$SCHEME_FILE" ]; then
-            echo "ERROR: Scheme (.xcscheme) not found in $XCODEPROJ/xcshareddata/xcschemes/"
-            exit 1
+          # Вытащим первый TARGET из проекта (без scheme)
+          TARGET="$(xcodebuild -list -project "$XCODEPROJ" \
+            | awk 'f{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
+          if [ -z "$TARGET" ]; then
+            echo "ERROR: TARGET not found in project"; exit 1
           fi
-          SCHEME="$(basename "$SCHEME_FILE" .xcscheme)"
-          echo "SCHEME=$SCHEME"
+          echo "TARGET=$TARGET"
 
-          # Сборка Release для устройства (iphoneos), без подписи
+          # Собираем Release для iphoneos. Кладём продукты в build_out/
           xcodebuild \
             -project "$XCODEPROJ" \
-            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath build_derived \
+            -target "$TARGET" \
+            SYMROOT=build_out \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -57,19 +58,22 @@ jobs:
       - name: Package as IPA
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p artifacts
-          APP_PATH="$(find build_derived/Build/Products -type d -name '*.app' -path '*Release-iphoneos*' -print -quit)"
+
+          # Ищем .app в нашем SYMROOT (build_out/Release-iphoneos/)
+          APP_PATH="$(find build_out -type d -name '*.app' -path '*Release-iphoneos*' -print -quit)"
           echo "APP_PATH=$APP_PATH"
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app for iphoneos not found"
-            echo "Available products:"
-            find build_derived/Build/Products -maxdepth 3 -type d -print
+            echo "ERROR: .app for iphoneos not found. Available dirs:"; find build_out -maxdepth 3 -type d -print
             exit 1
           fi
+
           rm -rf Payload
           mkdir Payload
-          cp -R "$APP_PATH" Payload/
+          cp -R "$APP_PATH" "Payload/"
+
+          # Создаём НЕподписанный IPA
           zip -r artifacts/X-Port-unsigned.ipa Payload
 
       - name: Upload IPA
