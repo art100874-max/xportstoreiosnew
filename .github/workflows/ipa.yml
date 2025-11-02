@@ -24,23 +24,19 @@ jobs:
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Сборка ПОД УСТРОЙСТВО (iphoneos), arm64, БЕЗ подписи,
-      #    с явным каталогом вывода CONFIGURATION_BUILD_DIR=build_ios_out
+      # 2) Сборка под устройство (iphoneos), arm64, без подписи,
+      #    с явным каталогом вывода
       - name: Build device .app (iphoneos, arm64, unsigned)
         shell: bash
         run: |
           set -euo pipefail
 
           XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
-          if [ -z "$XCODEPROJ" ]; then
-            echo "ERROR: .xcodeproj not found"; exit 1
-          fi
+          [ -n "$XCODEPROJ" ] || { echo "ERROR: .xcodeproj not found"; exit 1; }
           echo "XCODEPROJ=$XCODEPROJ"
 
           TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f && NF{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
-          if [ -z "$TARGET" ]; then
-            echo "ERROR: TARGET not found in project"; exit 1
-          fi
+          [ -n "$TARGET" ] || { echo "ERROR: TARGET not found in project"; exit 1; }
           echo "TARGET=$TARGET"
 
           rm -rf build_ios_out
@@ -63,14 +59,18 @@ jobs:
           find build_ios_out -maxdepth 3 -print
 
           APP_PATH="$(find build_ios_out -type d -name '*.app' -print -quit || true)"
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app not found in build_ios_out"; exit 1
-          fi
+          [ -n "$APP_PATH" ] || { echo "ERROR: .app not found in build_ios_out"; exit 1; }
           echo "APP_PATH=$APP_PATH"
+
+          # Проверим архитектуру главного бинаря (должен быть arm64)
+          EXEC_NAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")
+          echo "CFBundleExecutable=$EXEC_NAME"
+          lipo -info "$APP_PATH/$EXEC_NAME" || true
+
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 3) Упаковать в НЕподписанный IPA (Payload/<name>.app)
-      - name: Package as IPA
+      # 3) Упаковать в НЕподписанный IPA, переименовав бандл в ASCII (XPort.app)
+      - name: Package as IPA (ASCII bundle name)
         shell: bash
         run: |
           set -euo pipefail
@@ -78,23 +78,17 @@ jobs:
           rm -rf Payload
           mkdir Payload
 
-          echo "Verifying APP_PATH before packaging:"
+          echo "Verifying APP_PATH:"
           ls -al "$APP_PATH" || true
+          [ -f "$APP_PATH/Info.plist" ] || { echo "ERROR: Info.plist not found inside app bundle!"; exit 1; }
 
-          if [ ! -f "$APP_PATH/Info.plist" ]; then
-            echo "ERROR: Info.plist not found inside app bundle!"
-            find build_ios_out -type f -maxdepth 3
-            exit 1
-          fi
+          # Переименуем бандл в ASCII, чтобы Sideloadly на Windows не падал
+          cp -R "$APP_PATH" "Payload/XPort.app"
 
-          # Копируем .app строго в один уровень Payload/
-          cp -R "$APP_PATH" Payload/
-
-          # Создаём IPA без вложенных Payload
+          # Создаём IPA
           (cd Payload && zip -r ../artifacts/X-Port-unsigned.ipa .)
           echo "IPA packaged successfully."
 
-      # 4) Артефакт IPA
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
