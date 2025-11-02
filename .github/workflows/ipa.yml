@@ -24,8 +24,9 @@ jobs:
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Сборка девайсной версии (iphoneos), без подписи
-      - name: Build device .app (iphoneos)
+      # 2) Сборка ПОД УСТРОЙСТВО (iphoneos), arm64, БЕЗ подписи,
+      #    с явным каталогом вывода CONFIGURATION_BUILD_DIR=build_ios_out
+      - name: Build device .app (iphoneos, arm64, unsigned)
         shell: bash
         run: |
           set -euo pipefail
@@ -36,51 +37,39 @@ jobs:
           fi
           echo "XCODEPROJ=$XCODEPROJ"
 
-          echo "== xcodebuild -list =="
-          xcodebuild -list -project "$XCODEPROJ" || true
-
           TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f && NF{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
           if [ -z "$TARGET" ]; then
             echo "ERROR: TARGET not found in project"; exit 1
           fi
           echo "TARGET=$TARGET"
 
-          # Сборка Release для устройства, без подписи
+          rm -rf build_ios_out
+          mkdir -p build_ios_out
+
           xcodebuild \
             -project "$XCODEPROJ" \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -arch arm64 \
             -target "$TARGET" \
+            CONFIGURATION_BUILD_DIR="$PWD/build_ios_out" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
 
-          # Берём точные пути из настроек сборки
-          SETTINGS="$(xcodebuild -project "$XCODEPROJ" -target "$TARGET" -configuration Release -sdk iphoneos -showBuildSettings)"
-          TARGET_BUILD_DIR="$(printf "%s\n" "$SETTINGS" | awk -F' = ' '/ TARGET_BUILD_DIR /{v=$2} END{print v}')"
-          WRAPPER_NAME="$(printf "%s\n" "$SETTINGS" | awk -F' = ' '/ WRAPPER_NAME /{v=$2} END{print v}')"
-          APP_PATH="$TARGET_BUILD_DIR/$WRAPPER_NAME"
+          echo "== build_ios_out contents =="
+          find build_ios_out -maxdepth 3 -print
 
-          echo "TARGET_BUILD_DIR=$TARGET_BUILD_DIR"
-          echo "WRAPPER_NAME=$WRAPPER_NAME"
+          APP_PATH="$(find build_ios_out -type d -name '*.app' -print -quit || true)"
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app not found in build_ios_out"; exit 1
+          fi
           echo "APP_PATH=$APP_PATH"
-
-          # Фоллбек: ищем .app, если не нашли по переменным
-          if [ ! -d "$APP_PATH" ]; then
-            APP_PATH="$(find "$TARGET_BUILD_DIR" -type d -name '*.app' -print -quit || true)"
-          fi
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            APP_PATH="$(find . -type d -name '*.app' -path '*Release-iphoneos*' -print -quit || true)"
-          fi
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: .app not found after build"; exit 1
-          fi
-
-          # Пробросим путь в следующий шаг
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 3) Запаковать .app в неподписанный IPA (Payload/*.app → .ipa)
+      # 3) Упаковать в НЕподписанный IPA (Payload/<name>.app)
       - name: Package as IPA
         shell: bash
         run: |
@@ -88,27 +77,26 @@ jobs:
           mkdir -p artifacts
           rm -rf Payload
           mkdir Payload
+
+          echo "Verifying APP_PATH before packaging:"
+          ls -al "$APP_PATH" || true
+
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR: Info.plist not found inside app bundle!"
+            find build_ios_out -type f -maxdepth 3
+            exit 1
+          fi
+
+          # Копируем .app строго в один уровень Payload/
           cp -R "$APP_PATH" Payload/
+
+          # Создаём IPA без вложенных Payload
           (cd Payload && zip -r ../artifacts/X-Port-unsigned.ipa .)
+          echo "IPA packaged successfully."
 
-      # 4) На всякий случай выгружаем build-артефакты для диагностики
-      - name: Find build products
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p debug_artifacts
-          # Снимем дерево продуктов, чтобы в случае чего понять структуру
-          find . -maxdepth 6 -type d -name "Build" -print | xargs -I{} sh -c 'echo "== {} =="; find "{}" -maxdepth 4 -print' > debug_artifacts/build_tree.txt || true
-
+      # 4) Артефакт IPA
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: xportstore-unsigned-ipa
           path: artifacts/X-Port-unsigned.ipa
-
-      - name: Upload build tree (debug)
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-build-tree
-          path: debug_artifacts/build_tree.txt
-          if-no-files-found: ignore
