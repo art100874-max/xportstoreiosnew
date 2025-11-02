@@ -24,45 +24,53 @@ jobs:
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos), без подписи
+      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos), без подписи и с указанием SCHEME
       - name: Build iOS project for device (iphoneos)
         shell: bash
         run: |
           set -e
-          XCODEPROJ="$(find . -type d -name '*.xcodeproj' | head -n1)"
+          XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
           echo "XCODEPROJ=$XCODEPROJ"
-          # соберём Release для устройства (iphoneos), без подписи
+
+          # Найдём первую схему в проекте (.xcscheme)
+          SCHEME_FILE="$(ls "$XCODEPROJ/xcshareddata/xcschemes/"*.xcscheme | head -n1)"
+          if [ -z "$SCHEME_FILE" ]; then
+            echo "ERROR: Scheme (.xcscheme) not found in $XCODEPROJ/xcshareddata/xcschemes/"
+            exit 1
+          fi
+          SCHEME="$(basename "$SCHEME_FILE" .xcscheme)"
+          echo "SCHEME=$SCHEME"
+
+          # Сборка Release для устройства (iphoneos), без подписи
           xcodebuild \
             -project "$XCODEPROJ" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build_derived \
-            BUILD_LIBRARIES_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | xcpretty || exit ${PIPESTATUS[0]}
+            build
 
-      # 3) Находим .app и пакуем в IPA
+      # 3) Пакуем .app в IPA
       - name: Package as IPA
         shell: bash
         run: |
           set -e
           mkdir -p artifacts
-          # ищем .app из девайсной сборки
-          APP_PATH="$(find build_derived/Build/Products -type d -name '*.app' -path '*Release-iphoneos*' | head -n1)"
+          APP_PATH="$(find build_derived/Build/Products -type d -name '*.app' -path '*Release-iphoneos*' -print -quit)"
           echo "APP_PATH=$APP_PATH"
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: .app for iphoneos not found"
+            echo "Available products:"
+            find build_derived/Build/Products -maxdepth 3 -type d -print
             exit 1
           fi
-          # создаём Payload и аккуратно кладём туда .app (с кавычками, чтобы русские/пробелы не сломали)
           rm -rf Payload
           mkdir Payload
           cp -R "$APP_PATH" Payload/
-          cd Payload
-          zip -r ../artifacts/X-Port-unsigned.ipa ./
-          cd ..
+          zip -r artifacts/X-Port-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
