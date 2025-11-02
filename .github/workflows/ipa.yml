@@ -24,23 +24,19 @@ jobs:
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Сборка под устройство (iphoneos), arm64, без подписи,
-      #    с явным каталогом вывода
+      # 2) Сборка под устройство (iphoneos, arm64), без подписи,
+      #    и явный каталог вывода
       - name: Build device .app (iphoneos, arm64, unsigned)
         shell: bash
         run: |
           set -euo pipefail
-
           XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
           [ -n "$XCODEPROJ" ] || { echo "ERROR: .xcodeproj not found"; exit 1; }
-          echo "XCODEPROJ=$XCODEPROJ"
-
           TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f && NF{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
           [ -n "$TARGET" ] || { echo "ERROR: TARGET not found in project"; exit 1; }
-          echo "TARGET=$TARGET"
 
-          rm -rf build_ios_out
-          mkdir -p build_ios_out
+          rm -rf build_ios_out Payload artifacts
+          mkdir -p build_ios_out artifacts
 
           xcodebuild \
             -project "$XCODEPROJ" \
@@ -55,39 +51,31 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-          echo "== build_ios_out contents =="
-          find build_ios_out -maxdepth 3 -print
-
           APP_PATH="$(find build_ios_out -type d -name '*.app' -print -quit || true)"
           [ -n "$APP_PATH" ] || { echo "ERROR: .app not found in build_ios_out"; exit 1; }
+
           echo "APP_PATH=$APP_PATH"
-
-          # Проверим архитектуру главного бинаря (должен быть arm64)
-          EXEC_NAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")
-          echo "CFBundleExecutable=$EXEC_NAME"
-          lipo -info "$APP_PATH/$EXEC_NAME" || true
-
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      # 3) Упаковать в НЕподписанный IPA, переименовав бандл в ASCII (XPort.app)
-      - name: Package as IPA (ASCII bundle name)
+      # 3) Пакуем через ditto и переименовываем бандл в ASCII
+      - name: Package IPA via ditto (ASCII bundle name)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
           rm -rf Payload
           mkdir Payload
 
-          echo "Verifying APP_PATH:"
-          ls -al "$APP_PATH" || true
-          [ -f "$APP_PATH/Info.plist" ] || { echo "ERROR: Info.plist not found inside app bundle!"; exit 1; }
+          # Проверим структуру
+          [ -f "$APP_PATH/Info.plist" ] || { echo "ERROR: Info.plist not found"; exit 1; }
 
-          # Переименуем бандл в ASCII, чтобы Sideloadly на Windows не падал
+          # Переименуем в ASCII, чтобы Windows/Sideloadly не спотыкались
           cp -R "$APP_PATH" "Payload/XPort.app"
 
-          # Создаём IPA
-          (cd Payload && zip -r ../artifacts/X-Port-unsigned.ipa .)
-          echo "IPA packaged successfully."
+          echo "Payload tree:"
+          find Payload -maxdepth 2 -print
+
+          # ВАЖНО: упаковка именно через ditto (как делает Xcode)
+          /usr/bin/ditto -c -k --keepParent Payload artifacts/X-Port-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
