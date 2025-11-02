@@ -2,29 +2,20 @@
 requires = ["briefcase>=0.3.25"]
 build-backend = "briefcase.build_system"
 
-[tool.briefcase]
-project_name = "X-Port — техника и аксессуары"
-bundle = "ru.xportstore"
-version = "0.1.0"
-url = "https://xportstore.ru"
-license = "Proprietary"           # предупреждение можно игнорировать
-author = "X-Port"
-author_email = "support@xportstore.ru"
-
 [tool.briefcase.app.xportstore]
-# Важно: только ASCII в названии бандла, чтобы Sideloadly не падал
-formal_name = "XPort"             # Имя .app: XPort.app
-app_name   = "xportstore"         # Имя python-пакета/исполняемого: xportstore
+formal_name = "XPort"
+app_name   = "xportstore"
 description = "Tekhnika i aksessuary"
-sources = ["src/xportstore"]      # Путь к существующему пакету
+sources = ["src/xportstore"]
 icon = "src/xportstore/resources/icon.png"
 requires = [
-    "toga-core>=0.4.7",
+    "toga-core==0.4.7",
+    "rubicon-objc>=0.4.7",
 ]
 
 [tool.briefcase.app.xportstore.iOS]
 requires = [
-    "toga-iOS>=0.4.7",
+    "toga-iOS==0.4.7",
 ]
 minimum_iOS = "13.0"
 supports_binaries = true
