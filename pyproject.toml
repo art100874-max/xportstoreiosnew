@@ -3,21 +3,20 @@ requires = ["briefcase>=0.3.25"]
 build-backend = "briefcase.build_system"
 
 [tool.briefcase]
-# Проект можно оставить на русском, это не влияет на бандл
 project_name = "X-Port — техника и аксессуары"
 bundle = "ru.xportstore"
 version = "0.1.0"
 url = "https://xportstore.ru"
-license = "Proprietary"
+license = "Proprietary"           # предупреждение можно игнорировать
 author = "X-Port"
 author_email = "support@xportstore.ru"
 
 [tool.briefcase.app.xportstore]
-# ВАЖНО: только ASCII в именах, чтобы Sideloadly не падал
-formal_name = "XPort"         # Отображаемое имя и имя таргета Xcode
-app_name   = "XPort"          # Имя пакета/исполняемого файла (XPort.app/XPort)
+# Важно: только ASCII в названии бандла, чтобы Sideloadly не падал
+formal_name = "XPort"             # Имя .app: XPort.app
+app_name   = "xportstore"         # Имя python-пакета/исполняемого: xportstore
 description = "Tekhnika i aksessuary"
-sources = ["src/xportstore"]
+sources = ["src/xportstore"]      # Путь к существующему пакету
 icon = "src/xportstore/resources/icon.png"
 requires = [
     "toga-core>=0.4.7",
