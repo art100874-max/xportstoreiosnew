@@ -1,30 +1,32 @@
+import os
+import traceback
 import toga
-from toga.style import Pack
-from toga.style.pack import COLUMN, ROW
 
 
-def on_refresh_clicked(button):
-    print("Обновление каталога...")
+def _build_ui(app: toga.App) -> toga.Box:
+    box = toga.Box()
+    box.add(toga.Label("XPort: hello iOS 👋"))
+    return box
 
 
-def build_ui(app: toga.App) -> toga.Box:
-    refresh_btn = toga.Button("Обновить каталог", on_press=on_refresh_clicked)
-    root = toga.Box(style=Pack(direction=COLUMN, padding=16))
-    top = toga.Box(style=Pack(direction=ROW, padding_bottom=12))
-    top.add(refresh_btn)
-    root.add(top)
-    return root
-
-
-def startup(app: toga.App):
-    app.main_window = toga.MainWindow(title=app.formal_name)
-    app.main_window.content = build_ui(app)
-    app.main_window.show()
+def _startup(app: toga.App):
+    # безопасный старт с записью стека в файл при любой ошибке
+    try:
+        app.main_window = toga.MainWindow(title="XPort")
+        app.main_window.content = _build_ui(app)
+        app.main_window.show()
+    except Exception:
+        # пишем лог падения в Documents приложения
+        try:
+            docs_dir = app.paths.documents  # On My iPhone / XPort
+            os.makedirs(docs_dir, exist_ok=True)
+            with open(os.path.join(docs_dir, "last_crash.txt"), "w", encoding="utf-8") as f:
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        raise
 
 
 def main() -> toga.App:
-    return toga.App(
-        formal_name="X-Port",
-        app_id="ru.xportstore",
-        startup=startup,
-    )
+    # имя и app_id должны совпадать с pyproject.toml
+    return toga.App(formal_name="XPort", app_id="ru.xportstore", startup=_startup)
