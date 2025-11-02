@@ -1,0 +1,28 @@
+[build-system]
+requires = ["briefcase>=0.3.25"]
+build-backend = "briefcase.build_system"
+
+[tool.briefcase]
+project_name = "X-Port — техника и аксессуары"
+bundle = "ru.xportstore"
+version = "0.1.0"
+url = "https://xportstore.ru"
+license = "Proprietary"
+author = "X-Port"
+author_email = "support@xportstore.ru"
+
+[tool.briefcase.app.xportstore]
+formal_name = "X-Port — техника и аксессуары"
+description = "Техника и аксессуары"
+sources = ["src/xportstore"]
+icon = "src/xportstore/resources/icon.png"
+requires = [
+    "toga-core>=0.4.7",
+]
+
+[tool.briefcase.app.xportstore.iOS]
+requires = [
+    "toga-iOS>=0.4.7",
+]
+minimum_iOS = "13.0"
+supports_binaries = true
