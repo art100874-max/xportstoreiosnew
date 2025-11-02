@@ -2,9 +2,20 @@
 requires = ["briefcase>=0.3.25"]
 build-backend = "briefcase.build_system"
 
+[tool.briefcase]
+# ОБЯЗАТЕЛЬНЫЕ ПОЛЯ — они и потерялись в твоём файле:
+project_name = "XPort"
+bundle = "ru.xportstore"
+version = "0.1.0"
+url = "https://xportstore.ru"
+license = "Proprietary"
+author = "X-Port"
+author_email = "support@xportstore.ru"
+
 [tool.briefcase.app.xportstore]
-formal_name = "XPort"
-app_name   = "xportstore"
+# ASCII-имя, чтобы Sideloadly не ломался
+formal_name = "XPort"          # Будет XPort.app
+app_name   = "xportstore"      # Имя python-пакета/исполняемого
 description = "Tekhnika i aksessuary"
 sources = ["src/xportstore"]
 icon = "src/xportstore/resources/icon.png"
