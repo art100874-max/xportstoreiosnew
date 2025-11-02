@@ -20,18 +20,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install briefcase
 
-      # 1) Сгенерировать iOS-проект Briefcase'ом
+      # 1) Сгенерировать iOS-проект
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Собрать девайсную (iphoneos) .app БЕЗ подписи.
-      #    Не полагаемся на схемы; берём первый TARGET, который вернёт xcodebuild -list.
-      - name: Build iOS project for device (iphoneos)
+      # 2) Сборка девайсной версии (iphoneos), без подписи
+      - name: Build device .app (iphoneos)
         shell: bash
         run: |
           set -euo pipefail
 
-          # Найти .xcodeproj
           XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
           if [ -z "$XCODEPROJ" ]; then
             echo "ERROR: .xcodeproj not found"; exit 1
@@ -41,68 +39,76 @@ jobs:
           echo "== xcodebuild -list =="
           xcodebuild -list -project "$XCODEPROJ" || true
 
-          # Вытащить первый TARGET
-          TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
+          TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f && NF{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
           if [ -z "$TARGET" ]; then
             echo "ERROR: TARGET not found in project"; exit 1
           fi
           echo "TARGET=$TARGET"
 
-          # Строим Release для iphoneos, без подписи
-          # Используем общий DerivedDataPath, а не SYMROOT, чтобы не ловить странности путей.
+          # Сборка Release для устройства, без подписи
           xcodebuild \
             -project "$XCODEPROJ" \
             -configuration Release \
             -sdk iphoneos \
             -target "$TARGET" \
-            -derivedDataPath build_derived \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | tee build_log.txt
+            build
 
-          echo "== Поиск .app в build_derived =="
-          find build_derived -type d -name "*.app" -maxdepth 6 -print || true
+          # Берём точные пути из настроек сборки
+          SETTINGS="$(xcodebuild -project "$XCODEPROJ" -target "$TARGET" -configuration Release -sdk iphoneos -showBuildSettings)"
+          TARGET_BUILD_DIR="$(printf "%s\n" "$SETTINGS" | awk -F' = ' '/ TARGET_BUILD_DIR /{v=$2} END{print v}')"
+          WRAPPER_NAME="$(printf "%s\n" "$SETTINGS" | awk -F' = ' '/ WRAPPER_NAME /{v=$2} END{print v}')"
+          APP_PATH="$TARGET_BUILD_DIR/$WRAPPER_NAME"
 
-      # 3) Упаковать в IPA (ищем .app надёжно)
+          echo "TARGET_BUILD_DIR=$TARGET_BUILD_DIR"
+          echo "WRAPPER_NAME=$WRAPPER_NAME"
+          echo "APP_PATH=$APP_PATH"
+
+          # Фоллбек: ищем .app, если не нашли по переменным
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH="$(find "$TARGET_BUILD_DIR" -type d -name '*.app' -print -quit || true)"
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            APP_PATH="$(find . -type d -name '*.app' -path '*Release-iphoneos*' -print -quit || true)"
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: .app not found after build"; exit 1
+          fi
+
+          # Пробросим путь в следующий шаг
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+
+      # 3) Запаковать .app в неподписанный IPA (Payload/*.app → .ipa)
       - name: Package as IPA
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-
-          # Сначала пытаемся найти .app для Release-iphoneos
-          APP_PATH="$(find build_derived -type d -name '*.app' -path '*Release-iphoneos*' -print -quit || true)"
-
-          # Если не нашли, берём ПЕРВУЮ попавшуюся .app внутри build_derived
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH="$(find build_derived -type d -name '*.app' -print -quit || true)"
-          fi
-
-          # Если всё ещё пусто — попробуем по всему репо (как крайний случай)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH="$(find . -type d -name '*.app' -print -quit || true)"
-          fi
-
-          echo "APP_PATH=$APP_PATH"
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app not found. Дамп содержимого:"
-            echo "== build_derived/Build/Products =="
-            find build_derived/Build/Products -maxdepth 3 -print || true
-            echo "== Весь проект =="
-            find . -maxdepth 6 -type d -name '*.app' -print || true
-            exit 1
-          fi
-
           rm -rf Payload
           mkdir Payload
           cp -R "$APP_PATH" Payload/
-
-          # Создаём НЕподписанный IPA (подойдёт для Sideloadly)
           (cd Payload && zip -r ../artifacts/X-Port-unsigned.ipa .)
+
+      # 4) На всякий случай выгружаем build-артефакты для диагностики
+      - name: Find build products
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p debug_artifacts
+          # Снимем дерево продуктов, чтобы в случае чего понять структуру
+          find . -maxdepth 6 -type d -name "Build" -print | xargs -I{} sh -c 'echo "== {} =="; find "{}" -maxdepth 4 -print' > debug_artifacts/build_tree.txt || true
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: xportstore-unsigned-ipa
           path: artifacts/X-Port-unsigned.ipa
+
+      - name: Upload build tree (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-build-tree
+          path: debug_artifacts/build_tree.txt
+          if-no-files-found: ignore
