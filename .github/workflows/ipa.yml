@@ -20,61 +20,86 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install briefcase
 
-      # 1) Генерируем Xcode-проект (Briefcase)
+      # 1) Сгенерировать iOS-проект Briefcase'ом
       - name: Create iOS project
         run: briefcase create iOS
 
-      # 2) Собираем ДЛЯ УСТРОЙСТВА (iphoneos) по TARGET, без подписи
-      - name: Build iOS project for device (iphoneos) via TARGET
+      # 2) Собрать девайсную (iphoneos) .app БЕЗ подписи.
+      #    Не полагаемся на схемы; берём первый TARGET, который вернёт xcodebuild -list.
+      - name: Build iOS project for device (iphoneos)
         shell: bash
         run: |
           set -euo pipefail
 
-          # Найдём .xcodeproj
+          # Найти .xcodeproj
           XCODEPROJ="$(find . -type d -name '*.xcodeproj' -print -quit)"
+          if [ -z "$XCODEPROJ" ]; then
+            echo "ERROR: .xcodeproj not found"; exit 1
+          fi
           echo "XCODEPROJ=$XCODEPROJ"
 
-          # Вытащим первый TARGET из проекта (без scheme)
-          TARGET="$(xcodebuild -list -project "$XCODEPROJ" \
-            | awk 'f{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
+          echo "== xcodebuild -list =="
+          xcodebuild -list -project "$XCODEPROJ" || true
+
+          # Вытащить первый TARGET
+          TARGET="$(xcodebuild -list -project "$XCODEPROJ" | awk 'f{gsub(/^[ \t]+/,""); print; exit} /Targets:/{f=1}')"
           if [ -z "$TARGET" ]; then
             echo "ERROR: TARGET not found in project"; exit 1
           fi
           echo "TARGET=$TARGET"
 
-          # Собираем Release для iphoneos. Кладём продукты в build_out/
+          # Строим Release для iphoneos, без подписи
+          # Используем общий DerivedDataPath, а не SYMROOT, чтобы не ловить странности путей.
           xcodebuild \
             -project "$XCODEPROJ" \
             -configuration Release \
             -sdk iphoneos \
             -target "$TARGET" \
-            SYMROOT=build_out \
+            -derivedDataPath build_derived \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build | tee build_log.txt
 
-      # 3) Пакуем .app в IPA
+          echo "== Поиск .app в build_derived =="
+          find build_derived -type d -name "*.app" -maxdepth 6 -print || true
+
+      # 3) Упаковать в IPA (ищем .app надёжно)
       - name: Package as IPA
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
 
-          # Ищем .app в нашем SYMROOT (build_out/Release-iphoneos/)
-          APP_PATH="$(find build_out -type d -name '*.app' -path '*Release-iphoneos*' -print -quit)"
+          # Сначала пытаемся найти .app для Release-iphoneos
+          APP_PATH="$(find build_derived -type d -name '*.app' -path '*Release-iphoneos*' -print -quit || true)"
+
+          # Если не нашли, берём ПЕРВУЮ попавшуюся .app внутри build_derived
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH="$(find build_derived -type d -name '*.app' -print -quit || true)"
+          fi
+
+          # Если всё ещё пусто — попробуем по всему репо (как крайний случай)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH="$(find . -type d -name '*.app' -print -quit || true)"
+          fi
+
           echo "APP_PATH=$APP_PATH"
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app for iphoneos not found. Available dirs:"; find build_out -maxdepth 3 -type d -print
+            echo "ERROR: .app not found. Дамп содержимого:"
+            echo "== build_derived/Build/Products =="
+            find build_derived/Build/Products -maxdepth 3 -print || true
+            echo "== Весь проект =="
+            find . -maxdepth 6 -type d -name '*.app' -print || true
             exit 1
           fi
 
           rm -rf Payload
           mkdir Payload
-          cp -R "$APP_PATH" "Payload/"
+          cp -R "$APP_PATH" Payload/
 
-          # Создаём НЕподписанный IPA
-          zip -r artifacts/X-Port-unsigned.ipa Payload
+          # Создаём НЕподписанный IPA (подойдёт для Sideloadly)
+          (cd Payload && zip -r ../artifacts/X-Port-unsigned.ipa .)
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
