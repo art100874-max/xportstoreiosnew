@@ -1,0 +1,42 @@
+name: Build Unsigned IPA (for Sideloadly)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Briefcase
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install briefcase
+
+      - name: Create iOS project
+        run: briefcase create iOS
+
+      - name: Build iOS project
+        run: briefcase build iOS
+
+      - name: Package as IPA
+        run: |
+          mkdir -p artifacts
+          APP_PATH=$(find . -type d -name "*.app" | head -n1)
+          cd "$(dirname "$APP_PATH")"
+          mkdir Payload
+          mv "$APP_PATH" Payload/
+          zip -r ../artifacts/X-Port-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: xportstore-unsigned-ipa
+          path: artifacts/X-Port-unsigned.ipa
